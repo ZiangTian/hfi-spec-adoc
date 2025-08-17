@@ -1,0 +1,3 @@
+[submodule "docs-spec-template"]
+	path = docs-spec-template
+	url = https://github.com/riscv/docs-spec-template.git
