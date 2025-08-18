@@ -926,16 +926,16 @@ The result of an HFI fault due to an HFI policy violation is stored in the <code
 <div class="ulist">
 <ul>
 <li>
-<p><em>hfi_fault_occurred</em> (1-bit)_: is a bit that indicates that an hfi fault has occurred.</p>
+<p><em>hfi_fault_occurred</em> (1-bit): is a bit that indicates that an hfi fault has occurred.</p>
 </li>
 <li>
-<p><em>hfi_fault_region</em> (8-bit)_: indicates which region the fault occured in, if the fault was do to an explicit region trap (out of bounds or insufficient permissions), it will contain the number of the region that caused the fault, i.e., the operand to an h-prefixed instruction. If the fault was caused by an implicit region i.e. insufficient permission to access a matched region,it will contain the number of the region. If the fault was cause because no implicit region matched an operation, it will contain 0.</p>
+<p><em>hfi_fault_region</em> (8-bit): indicates which region the fault occured in, if the fault was do to an explicit region trap (out of bounds or insufficient permissions), it will contain the number of the region that caused the fault, i.e., the operand to an h-prefixed instruction. If the fault was caused by an implicit region i.e. insufficient permission to access a matched region,it will contain the number of the region. If the fault was cause because no implicit region matched an operation, it will contain 0.</p>
 </li>
 <li>
-<p><em>hfi_fault_op</em> (2-bit)_: indicates the operation that faulted, this will be a <code>LOAD_FAULT</code> or <code>STORE_FAULT</code> for a failed load or store, or <code>FETCH_FAULT</code> for a failed instruction fetch.</p>
+<p><em>hfi_fault_op</em> (2-bit): indicates the operation that faulted, this will be a <code>LOAD_FAULT</code> or <code>STORE_FAULT</code> for a failed load or store, or <code>FETCH_FAULT</code> for a failed instruction fetch.</p>
 </li>
 <li>
-<p><em>hfi_fault_type</em> (1-bit)_: indicates the type of fault. If <code>OUT_OF_BOUNDS</code>, it indicates that an operation was out of bounds if it was explicit region fault , or that no implicit region matched the operation (in this case <code>hfi_fault_region</code> will be equal to zero). If <code>INSUFFICIENT_PERMISSIONS</code>, either an explicit region had insufficient permissions for an access, or whatever implicit region matched the operation did not have sufficient permissions.</p>
+<p><em>hfi_fault_type</em> (1-bit): indicates the type of fault. If <code>OUT_OF_BOUNDS</code>, it indicates that an operation was out of bounds if it was explicit region fault , or that no implicit region matched the operation (in this case <code>hfi_fault_region</code> will be equal to zero). If <code>INSUFFICIENT_PERMISSIONS</code>, either an explicit region had insufficient permissions for an access, or whatever implicit region matched the operation did not have sufficient permissions.</p>
 </li>
 </ul>
 </div>
