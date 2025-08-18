@@ -1,0 +1,15 @@
+[[sec_purpose]]
+== Purpose
+
+Hardware-assisted fault isolation (HFI) is a hardware extension that supports
+in-process isolation (sandboxing) of unmodified native binary code and also
+integrates into existing software based fault isolation (SFI cite:[wahbe-sfi]) based
+sandboxing systems, systems such as WebAssembly cite:[wasm] and Google's
+Ubercage (Google Chrome's v8 JIT sandbox cite:[v8-sbx]), to improve their
+performance, security, and scalability cite:[hfi].
+
+HFI aims to provide all the capabilities needed for secure sandboxing, namely
+data and control flow isolation as well as complete and efficient mediation of privileged
+instructions (i.e. system calls). This specification describes the functional
+properties of HFI on RISC-V, a more complete description of the background and
+motivation for HFI is presented in a paper published at ASPLOS 2023 cite:[hfi].

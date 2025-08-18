@@ -1,0 +1,36 @@
+[[sec_sbx_setup]]
+== Sandbox Setup
+
+The sandboxing runtime can query if the processor supports HFI by checking the supported extension string from the device tree or the ACPI RISC-V Hart Capabilities Table as is the common practice cite:[riscv-ext-cpuid]. Specifically, the string will list "hfi-_version_" if HFI is supported. The HFI version described in this spec is "1".
+
+If HFI is supported, HFI mode is enabled with the `hfienter` instruction, and disabled with the `hfiexit` instruction. The `hfienter` instruction has two variants---the first variant takes a single register operand which specifies the sandbox configuration options as a bit vector called `hfioptions_t`, that has the following fields:
+
+* _lock_regions_: _reg_u1_---Regions configurations are normally specified prior to `hfienter`, using instructions such `hfisetregionsize` (See <<sec_regions,Section on Regions>>). If _lock_regions_ is set to _false (0)_, region manipulation instructions can also be called while in HFI mode (i.e., the region configuration can be modified in the sandbox). If _true (1)_, these instructions cannot be called while in HFI mode.
+
+* _redirect_system_calls_: _reg_u1_---HFI sandboxes can interpose on system calls made by sandboxed code. If _redirect_system_calls_ is set to _false (0)_, system calls are unaffected by HFI. If _true (1)_, HFI will redirect system calls (`ecall`) instructions to the HFI exit handler (which can be set with the `hfisetexithandler` instruction discussed in <<sec_exit_handler,Section on Exit Handler>>).
+
+* _redirect_exits_: _reg_u1_---HFI sandboxes can interpose on invocations of `hfiexit` so the application can take control once the sandbox code completes. If _redirect_exits_ is set to _false (0)_, `hfiexit` disables HFI and execution simply falls through to the next instruction. If _true (1)_, `hfiexit` disables HFI and redirects control flow to the exit_handler (which can be set with the `hfisetexithandler` instruction discussed in <<sec_exit_handler,Section on Exit Handler>>).
+
+* _serialize_enter_exits_: _reg_u1_---HFI sandboxes can add fences sandbox entries and exit (through the `hfienter` and `hfiexit` instructions), a required step for Spectre protections. If _serialize_enter_exits_ is _false (0)_, these instructions do not introduce any serialization or fencing. If _true (1)_, these instructions act as a fence for all memory operations that are run prior to these instructions.
+
+The second variant of `hfienter` operates like `hfienter` variant 1 plus a jump instruction; it takes the `hfioptions_t` as the first operand and takes the target of the jump in a register as the second operand.
+
+// "CSRs" here
+// hfi_usermode_enabled (changed to hfi_status_reg)
+// hfi_access_violation (should change to hfi_fault_status_reg)
+
+**Behavior**
+// [NOTE]
+// --
+// some of the CSRs here does not cohere with later in the doc. also, need to clarify that this isn't even CSR
+// --
+The `hfienter` instruction interacts with multiple internal registers. It sets the field `hfiusermodeenabled` in an internal register `hfistatusreg` to 1 on execution, and clears the `hfifaultoccurred` field in another internal register `hfifaultstatusreg` indicating that there has not been a violation of HFI's region rules since the last invocation of `hfienter`. The second variant of `hfienter` additionally sets the PC to the target specified in the second operand after its execution.
+The `hfiexit` instruction interacts with all three fields from `hfistatusreg`. It sets its `hfiusermodeenabled` field to 0 on execution, write the value of the program counter of the `hfiexit` instruction to its `hfiexitpc` field, and set its `hfiexitreason` field to 1, indicating the sandbox exit was due to and `hfiexit` instruction.
+`hfienter` and `hfiexit` must always act as fence for other HFI instructions, i.e., they only execute after all in-flight HFI instructions have completed.
+
+**Faults**
+The `hfienter` instruction will trap if the CPU is already in HFI mode. The `hfiexit` instruction will trap if the CPU is not in HFI mode.
+
+**Design Rationale**
+Most of the options in `hfioptions_t` are present to support different use cases. When executing unmodified native code, the sandboxed code is totally untrusted, thus regions are locked, system calls are redirected, etc. However, when sandboxing code from existing SFI systems such as WebAssembly, it is more efficient/not necessary for HFI to do some checks, since these systems already handle some safety checks in their compiler/runtime. For example, these systems may not want to redirect system calls.
+Similarly, the choice of whether or not to serialize `hfiexit` and `hfienter` will depend on the threat model that a particular application is trying to enforce (i.e. if they want greater Spectre safety), we leave it to the user to choose whether they wish to opt into this added overhead. Finally, `hfienter` is offered in two variants as some sandboxing runtimes may want the option to jump directly to executing sandboxed code after sandboxing is enabled via `hfienter`, while other runtimes may want the instruction to fall through to avoid any costs due to extra control flow. The former behavior can be difficult to accomplish with the single operand variant of `hfienter` as it requires the instruction following `hfienter` to be part of the sandbox's code---which may not always be possible. The latter behavior's performance is difficult to achieve with an instruction that includes control flow.

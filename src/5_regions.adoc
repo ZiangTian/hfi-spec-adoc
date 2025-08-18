@@ -1,0 +1,135 @@
+[[sec_regions]]
+== Regions
+
+Regions offer a limited version of the functionality found in traditional segmented memory systems, that control access using `<base, bound, permission>` tuples to control access to contiguous ranges of memory.
+
+By default, a processor in HFI mode has no access to memory i.e. it cannot read data or run code. To enable sandboxed code to run, a sandbox runtime must explicitly configure regions prior executing `hfienter`. In the next sections, we provide a brief overview of the three types of HFI regions, and then specify how to configure these regions.
+
+[[subsec_region_types]]
+=== Regions Types
+
+HFI offers three region types implicit code, implicit data, and explicit data. Each type is specialized to particular tasks, with the aim of reducing hardware complexity.
+
+.Implicit Data and Implicit Code Regions
+Implicit regions are essential for isolating memory accesses and control flow of unmodified native code, as well as other situations where explicit regions (described next) would be impossible to use.
+HFI discriminates implicit regions into code and data regions, to keep the control and data pipelines simpler and more efficient. Data regions can grant read and write access and only apply to loads and stores, while code regions apply only to instruction fetches, and can only grant execute permissions.
+
+Implicit data region checks apply to every memory access, and grant access on a first-match basis. For example, if sandboxed code executes an "`lw rd, rs(offset)`" instruction, HFI will check if the address in `rs + offset` is in range in _any_ of the implicit regions in parallel. For the first matching implicit region, it will check the permissions to see if reads are allow--if so, it will proceed. If the permission check fails, or if there is no match, HFI will trap. Implicit code regions apply similar checks to code.
+
+Implicit regions perform bounds checks based on _prefix matching_. Concretely, each region specifies a _base_prefix_ (the region's base address) and an _lsb_mask_. To check if an address is in bounds, HFI uses the _lsb_mask_ to remove the least significant bits of the address, and compares the remaining prefix to _base_prefix_.
+Implicit regions thus must be power of two sized and aligned---thus, they trade granularity for efficient checking---in particular, checks can be implemented with simple masking operations. Implicit regions checks are not applied to operations on explicit regions, which we discuss next.
+
+// HFI provides six implicit regions per-sandbox, four data regions (e.g., for the heap),
+// and two code regions (e.g., for the application and shared library
+// code) -- The region count was based on experience sandboxing code in
+// production settings.
+
+**Explicit regions**
+Explicit regions provide region relative addressing, i.e., addressing is always relative to the base of the currently _active region_ (by default, explicit data region 1). This offers efficient fine grain control over access to memory within a particular sandbox address or shared buffer. HFI provides two different region sizes~(_large/small_), with different granularities. Large regions can address up to 256 TiB (stem:[2^{48}]) and are sized and aligned to multiples of 64K (stem:[2^{16}]). Small regions, in contrast, can only address up to 4GiB (stem:[2^{32}]), but are byte granular in size and alignment.
+
+To access memory through explicit regions, a program must use the h-prefixed variants of normal load and store instructions (`hlw`, `hsw`, `hlh`, etc.). These instruction target the active region, but can be changed to use a different region as described in <<subsec_standard_profile,the section on standard profiles>>. For example, `hlw x1, A(x0)` will succeed if the address being loaded is falls within explicit region 1, and there is a read permission set on that region, otherwise it will fail.
+
+**A few notes on size and alignment**
+Unaligned memory operations that are split by the micro-architecture into independent operations will be checked independently by HFI. If one split faults, the original fused instruction will fault, as will the split instruction that violates HFI bounds. However, the split operation that is within bounds may is allowed to have visible _micro-architectural_ side effects within the sandbox.
+
+To safely implement explicit bounds checks, the bounds check must be applied to the operand of an operation (i.e., the address being loaded/stored to) plus the size of the operand, to ensure that longer operations do not exceed bounds checks.
+
+Regions also have minimum sizes. The smallest large explicit region is 64K, there is no minimum size on small explicit regions. The smallest implicit region is 64 bytes. The behavior of regions that do not meet these minimums is undefined.
+
+**Design Rationale**
+The large and small region sizes and alignment constraints on explicit regions allow us to implement explicit regions with a single 32-bit comparator. For small regions, HFI checks the least-significant 32-bits is within bounds, and ensures the top bits are zero. For large regions, HFI will drop the first 16-bits, and compare bits 16-48, while checking the top bits are zero. Like Intel x86, RISCV typically support a 48-bit virtual address space, on which this spec is based. This design rationale also applies to Sv39 or Sv57, though the comparator lengths need to be adjusted accordingly.
+
+While allowing regions that support arbitrary address ranges at with any size and alignment is conceptually simpler than specialized large and small regions, our restrictions allow bounds checking with very simple hardware. For base integer loads/stores, HFI's large and small regions constraints can be checked with a single 32-bit comparator, rather than the more costly multiple 64-bit comparators needed to check arbitrary region bounds. For atomic memory instructions that do not rely on relative addressing but use an absolute addresses, two 32-bit comparators are needed.
+
+Explicit regions' added granularity is critical for supporting Wasm heaps, which grow in 64K increments cite:[wasm]---while byte granularity is critical for efficiently sharing individual memory objects and sandboxing legacy code, as existing buffers can be shared in-place changing code or allocators.
+
+[[subsec_manip_regions]]
+=== Manipulating Regions
+
+Region state, which is stored in internal registers, can only read or modified HFI instructions. The instructions broadly operate on regions by a region number (`region_number_t`)---a unique number/index assigned to each HFI region on the CPU.
+
+**Region number assignments**
+The version of HFI defined in this spec (hfi1), defines three regions: one explicit data region with a `region_number_t` of 1, one implicit data region of `region_number_t` of 2, and one implicit data region of `region_number_t` of 3. Future versions may define multiple regions of each type (<<subsec_standard_profile,Section on Standard Profile>>), and each region will be assigned a unique `region_number_t`.
+
+We now discuss the instructions that can configure these regions:
+
+**Setting Region base and size**
+The following instructions are used to specify the range of memory a region applies to. To configure a specific region's base and size, a sandboxing runtime must first select the target region. This is accomplished by direct instructions that write to a dedicated register indicating current region being configured. Once a region is selected, its base address and mask/bound can be configured using separate pseudo-instructions that target dedicated registers. This approach breaks down the operation to fit standard RISC-V instruction formats, avoiding having multiple destination registers.
+
+`hfiselectregion`(_region_number_t_)
+
+`hfisetregionbase`(_reg_u64 base_)
+
+`hfigetregionbase`() -> _reg_u64 base_
+
+`hfisetregionbound`(_reg_u64 mask_or_bound_)
+
+`hfigetregionbound`() -> _reg_u64 mask_or_bound_
+
+**Behaviour**
+The region to configure is set with `hfiselectregion`, and then its sizes and locations are set using `hfisetregionbase` and `hfisetregionbound`. Regions are typically setup prior to entering the sandbox (with `hfienter`). If this instruction runs in a sandbox, i.e., `hfiusermodeenabled` is 1---which is allowed when `lock_regions` is 0---it must act as a memory fence. All prior memory instructions must complete before executing this instruction and subsequent memory operations should be issued only after the update.
+
+`hfiselectregion` has `region_number_t` as its operand register, and works closely with the other four instructions. While `hfisetregionbase` has the base of the region as its operand, `hfisetregionbound`'s operand depends on the type of region. If the region is an explicit data region, the operand should contain the bound/size of the region; if the region is an implicit data or code region, the third operand should contain the mask for the region. The value of the base and bound/mask should additionally conform to the per-region size and alignment requirements in <<subsec_region_types,the section on region types>>. However, the instruction does not check whether operands meet this criteria. If the operands don't meet the criteria, the resulting behavior is undefined.
+
+// Concretely, explicit data regions should have {base_address, bound} that conform
+// to the following restrictions: for large regions base, bound are multiples of
+// 64k; for small regions, regions can be up to 4GB in size, sizes are byte
+// granular and a region cannot span a 4GB boundary.
+// [TODO]
+// --
+// implicit regions
+// --
+
+`hfigetregionbound` and `hfigetregionbase` return region size information based on the previously fed `region_number_t`. Similarly, `hfigetregionbound` returns the mask if the region is implicit and the bound if the region is explicit.
+
+**Faults**
+These instructions fault if the region number specified does not exist (i.e., it is greater than the total number of regions). For efficiency, these instructions should not check whether region locations or sizes are invalid (e.g., the program has specifies an implicit region base that is not aligned to its size); rather the hardware will continue to operate using the provided base and size, although this behavior is to be considered undefined.
+
+**Design Rationale**
+When `hfisetregionsize` is run prior to `hfienter`, it doesn't need to act as a fence as `hfienter` can fulfill this purpose. However, when used inside the sandbox, `hfisetregionsize` must act as a fence, as otherwise inflight memory operations could potentially access memory outside the sandbox when they were issued if a region resized.
+
+**Setting Permissions, Enabling/Disabling Regions**
+The following instructions are used to configure permissions on regions, as well as to enable and disable regions.
+
+`hfisetregionpermission`(_permission_set_t_, _permission_t_)
+
+`hfigetregionpermission`(_permission_set_t_) -> _permission_t_
+
+**Behaviour**
+Region permissions are set using the `hfisetregionpermission` instruction. This instruction sets the permissions of all regions using a single bit vector. The instruction takes `permission_set_t` as the first argument. This is a 32-bit register which must have the value 0; other values are reserved for future use. The second operand to this instruction is a permission bit-vector `permission_t` encoded as follows:
+
+* Bits 0 to 3 are permissions for explicit data region 1. Bit 0 indicates if the region is enabled (i.e., should be enforced by the sandbox). Bit 1 and 2 indicates whether the region has read and write permissions respectively. Bit 3 indicates if the explicit data region is a large region (i.e., a region with a bound greater than 4GB as explained in <<subsec_region_types,the section on region types>>.
+
+* Bits 4 to 6 are permissions for implicit data region 1. Bit 4 indicates if the region is enabled. Bit 5 and 6 indicates whether the region has read and write permissions respectively.
+
+* Bits 7 to 8 are permissions for implicit code region 1. Bit 7 indicates if the region is enabled. Bit 8 indicates whether the region has execute permissions.
+
+**Faults**
+This instruction will fault if the `permission_set_t` is not set to 0, or if `hfiusermodeenabled` and `lock_regions` is set to 1 (when hfi mode is on with region configurations locked). Any unused bits of `permission_t` are ignored; thus setting an unused bit will not fault.
+
+**Design Rationale**
+An alternate design for this instruction would be to split up `hfisetregionpermission` to operate per-region (by changing the instruction to take `region_number_t` to operate on as the first parameter). However, this would lead to additional overheads in practice. This is because this instruction is primarily used when switching between active sandboxes. In this case, the permissions of all regions would likely need to be adjusting. If `hfisetregionpermission` operated per region, then three calls to this instruction would be needed to adjust the permissions of the three regions. In contrast, our design allows this to occur in a single instruction. Additionally, the `permission_set_t` parameter further future-proofs this design by allowing us to modify the format of this instruction for future versions of HFI, without breaking backward compatibility.
+
+**Clearing Regions**
+To clear region state rapidly e.g. on context switches, HFI offers `hfiresetregions`.
+
+**Behaviour**
+This instruction sets the base and bound/mask of all regions to zero (equivalent to calling `hfisetregionsize` with arguments of 0 on all regions), disables all regions and sets their permissions to zero (equivalent to calling `hfisetregionpermission` with a permission vector of 0). It also sets the active explicit data region to 1 (this will matter only in future HFI versions which have multiple explicit data regions).
+
+**Faults**
+This instruction faults if `hfiusermodeenabled` and `lock_regions` is set to 1 (when hfi mode is on with region configurations locked).
+
+**Design Rationale**
+While this instruction can effectively be achieved using combinations of other instructions, unifying this "reset" operation into a single instruction allows optimizing a number of paths. For example, when an application needs to switch between multiple sandboxes, software has to clear the state of the first sandbox before applying the state of the second sandbox. This allows optimizing the first step sequence. This operation is also useful when the OS kernel is switching between two scheduled processes both of which may use HFI. The OS kernel is responsible for saving and restoring each processes' HFI state, and thus can also use this instruction.
+
+=== Implementation Considerations
+
+**Implementation Semantics and Spectre**  To ensure Spectre safety, the following guidance is offered for implementers.
+
+_For code regions:_ To ensure security, prefix-checking should be carried out in parallel with the decode stage. If the check finds a matching region with execute permissions, it succeeds, and decode carries on normally. If the check fails, it prevents the decoded micro-ops from entering the pipeline, and instead translates all instructions into a faulting NOP micro-op. This ensures that instructions that are out-of-bounds are not executed during committed execution, and are also not executed speculatively.
+
+_For data regions:_ Bounds checking, DTLB lookup, and cache index lookups should happen in parallel. One concern here is that, cache state could be modified as a result of secret (out-of-bounds) data. To prevent this sort of side-channel attack all bounds must checks occur _before_ the processor resolves the physical address of a memory access. This is secure because the processor can update cache metadata like the LRU bits (for hits) or fetch new data blocks (for misses) only after resolving the physical address. HFI can therefore strictly prevent any metadata updates if there has been a fault.
+
+Note that out-of-bounds address can affect metadata of the DTLB or i-cache---e.g., LRU bits. However, the invariant we guarantee---no secret (data stored outside the boundaries of the region) ever affects architectural state---is still not violated, since we do not allow the _result_ of an out-of-bounds memory operation to propagate into any of these structure.
+
+To summarize, HFI's data pipeline is Spectre safe, since the data cache is not updated prior to bounds checks being completed; HFI's control pipeline is safe as bounds checks finish prior to instruction decode which is before the execution of instructions. This approach also helps to guarantee that any code executed as the result of PHT, BTB, and RSB (speculative) predictions are checked prior to execution.

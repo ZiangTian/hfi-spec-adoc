@@ -1,0 +1,131 @@
+[[sec_instruction_encoding]]
+== Instruction Encoding
+
+// With the exception of h-prefixed instructions (which we discuss separately), most HFI instructions such as transition instructions, region manipulation instructions have specific behavior and have little-to-no variation. Thus, to minimize opcode usage, these instructions can share a single opcode and simply be distinguished by the funct3 code. This optimization can be hidden from the end user by adding pseudo instructions to assemblers. Additionally some of these instructions can be implemented as pseudo instructions that read and writes to CSRs. To support backward compatible binaries, these instructions should be encoded using instructions that don't fault if not implemented.
+
+HFI introduces two sets of new instructions: h-prefixed instructions that mimic native load and store instructions used exclusively in explicit regions, and non-h-prefixed instructions that primarily interact with internal HFI registers. H-prefixed instructions should be encoded using opcodes that fail if not implemented, because the h-prefixed instructions introduce new functionality---relative memory accesses. As a result, binaries that use HFI's explicit region's would not be supported on regular hardware. However, binaries that only use HFI's implicit regions would remain backward compatible on CPUs that don't support HFI (albeit without the isolation enforcement).
+
+=== H-prefixed Instructions
+
+In order to provide full support for modern RV64GV processors, multiple extensions need to be supported in addition to the base integer instruction set. Specifically, HFI needs to accommodate memory access instructions in the Atomic extension (A), the Floating Point extensions of different precisions (F, D, Q), and the Vector extension (V).
+
+**Base Loads and Stores**
+H-prefixed base loads and stores automatically check against the bounds specified by the explicit region registers before serviced to memory. The base address stored in `rs1` is always ignored, and replaced with the base address of the explicit region.
+
+[[fig_enc_base]]
+.H-prefixed Base Loads and Stores
+image::Figures/enc-base-cropped.svg[width=70%, align=center]
+
+[[tab_enc_base]]
+.Encodings for h-prefixed base loads and stores, both using custom opcodes reserved in RISCV.
+[cols="3,3,3,^3,3,3", options="header"]
+|===
+| Opcode | Instruction | Funct3 | Opcode | Instruction | Funct3
+| 0001011 | `hlb`  | 000 | 0001011 | `hlwu` | 110
+| 0001011 | `hlh`  | 001 | 0101011 | `hsb`  | 000
+| 0001011 | `hlw`  | 010 | 0101011 | `hsh`  | 001
+| 0001011 | `hld`  | 011 | 0101011 | `hsw`  | 010
+| 0001011 | `hlbu` | 100 | 0101011 | `hsd`  | 011
+| 0001011 | `hlhu` | 101 |         |        |
+|===
+
+
+**Floating Point Loads and Stores**
+The floating point extensions include the single-precision, double-precision, and quad-precision extensions, all of which are encoded under the same opcode, and differentiated with a 3-bit width field. FP loads and stores behaves the same way as base loads and stores, only its register operands reference the floating point register file rather than the integer one. H-prefixed FP loads and stores still ignores and replaces the base address in `rs1` with the base address of the explicit region.
+
+[[fig_enc_fp]]
+.H-prefixed floating point loads and stores.
+image::Figures/enc-fp-cropped.svg[width=70%, align=center]
+
+[[tab_enc_fp]]
+.Encodings for h-prefixed vector loads and stores, using custom opcodes.
+[cols="3,3,3,^3,3,3", options="header"]
+|===
+| Opcode | Instruction | Funct3 | Opcode | Instruction | Funct3
+| 0011111 | `hflw` | 010 | 0111111 | `hfsw` | 010
+| 0011111 | `hfld` | 011 | 0111111 | `hfsd` | 011
+| 0011111 | `hflq` | 100 | 0111111 | `hfsq` | 100
+|===
+
+**Vector Memory Operations**
+The vector memory instructions enable accessing multiple memory blocks from multiple memory locations with a single load/store instruction, which complicates bound checks. Unlike Reusing the same opcodes from the FP extension, the vector loads and stores encode the four supported addressing modes in the `mop` field: unit-stride, strided, and two indexed modes (ordered and unordered). For each mode, the `nf` field specifies the number of elements to group together as a segment. To implement HFI versions of these instructions, the same opcodes from the h-hued FP instructions can be reused, with the width field and the mop field inheriting the same encoding of the extension (as in <<tab_enc_vec,Table on Vector Encodings>>). H-prefixed versions of these instructions need to bound the multiple memory accesses judiciously. A bounding scheme is detailed as below.
+
+_For strided instructions and indexed instructions:_ Both the strided instructions and indexed instructions are powerful instructions that can address the entire virtual memory space. The strided vector loads and stores access multiple locations in memory at a stride, while the indexed vector loads and stores access irregular memory locations at offsets provided in vector registers, much like the scatter-gather instructions in x86. On top of this, segment versions of these instructions enable accessing anywhere from one to eight elements at each location, called a "segment", potentially accessing bytes to kilobytes of memory based on the hardware capacity of vector registers.
+
+For these instructions, the bound checks can happen individually for each of the effective addresses after the vector memory loads and stores unit computes a chain of these effective addresses in parallel with the TLB lookup. Unlike scalar operations, HFI needs to check the entire segment against region bounds. An intuitive but expensive scheme is to do one 64-bit add and two 32-bit compare: add the segment size to the start address for the end address, and check the start and end addresses respectively against the region bound (how the check is simplifed to only using 32-bit comparators is detailed in original HFI paper). However, implementations can also utilize the relatively small segment size and avoid the expensive full adder.
+
+The segment size is determined by the `nf` field (an integer ranging between 1 and 8) encoded in the instruction, and the element size, whose maximum value depends on the vector length (`vlen`) of specific hardware implementation. `vlen` is put at a maximum value at or smaller than 4096 in most modern RISCV implementations cite:[ara], with a theoretical maximum of stem:[2^{16}]. The maximum segment size is 4KiB for a `vlen` stem:[<= 4096] and 64KiB for the theoretical max. To best capitalize on this property, while bounding the end of the segment, implementations can choose to add a cheaper 16-bit adder and a 48-bit incrementor (if `vlen` stem:[<= 4096]) or a 32-bit adder and a 32-bit incrementor (for greater `vlen`-s).
+
+_For unit-stride instructions:_ These instructions access multiple memory locations with a stride of 1. Hence, they always access a non-overlapping, contiguous chunk of memory, even when segment memory operation is enabled (the following segment sits next to the previous one). While the previous individual bound check may well work for unit-stride instructions, implementations may choose to only check the end address of the last segment at a higher cost of using a multiplier.
+
+[[fig_enc_vec]]
+.H-prefixed vector loads and stores.
+image::Figures/enc-vec-cropped.svg[width=80%, align=center]
+
+[[tab_enc_vec]]
+.Field encodings for vector loads and stores
+[cols="2,3,2,3,2,3", options="header"]
+|===
+| `mop` | Addressing Mode | `funct3` | Width | `opcode` | Operation
+| 00 | unit stride | 000 | byte | 0011111 | h-load
+| 01 | index (unordered) | 101 | half-word | 0111111 | h-store
+| 10 | constant stride | 110 | word | |
+| 11 | index (ordered) | 111 | double-word | |
+|===
+
+**Atomic Memory Operations**
+The atomic extension provides instructions to atomically read, modify, and write back to memory between multiple harts running in the same memory space, including general-purpose load and stores, and fetch-and-op instructions that atomically performs specific computations on memory contents fetched. Unlike other loads/stores instructions, the atomic instructions are encoded in R-type instruction format, using absolute addressing rather than offsets to a base. Therefore, while bounding the memory access, HFI cannot simply replace the base address and only check the offset with a single comparator. Instead, h-prefixed atomic instructions need to have the address in `rs1` checked specifically both against the base address and against the bound. This requires an additional 32-bit comparator.
+
+[[fig_enc_amo]]
+.H-prefixed atomic loads, stores and other atomic operations.
+image::Figures/enc-amo-cropped.svg[width=70%, align=center]
+
+[[tab_enc_base_amo]]
+.Encodings for h-prefixed atomic memory instructions, reusing the Atomic opcode.
+[cols="3,3,3,^3,3,3", options="header"]
+|===
+| Opcode | Instruction | Funct5 | Opcode | Instruction | Funct5
+| 0101111 | `hlr` | 00101 | 0101111 | `hamoor` | 01101
+| 0101111 | `hsc` | 00110 | 0101011 | `hamomin` | 01110
+| 0101111 | `hamoswap` | 00111 | 0101011 | `hamomax` | 01111
+| 0101111 | `hamoadd` | 01001 | 0101011 | `hamominu` | 10001
+| 0101111 | `hamoxor` | 01010 | 0101011 | `hamomaxu` | 10010
+| 0101111 | `hamoand` | 01011 | | |
+|===
+
+
+=== Non-h-prefixed Instructions
+
+The non-h-prefixed HFI instructions are functional instructions interacting with specific internal registers. Corresponding to the new internal registers, these instructions primarily fulfill three tasks: HFI mode transition, exit handler configuration, and region manipulation. All of the non-h-prefixed instructions are encoded in a R-type format under the same custom opcode `HFUNCTION` to achieve maximum flexibility (See R-type format in <<fig_r-type,Figure on R-Type Format>>). The funct 3 field differentiates the instructions based on the tasks, and the funct 7 field further distinguishes the specific instruction. The specific encoding is shown in <<tab_enc_non_h,Table on Non-h Encodings>>. The behavior of these instructions has mostly been covered in <<sec_sbx_setup,Sandbox Setup>>, <<sec_exit_handler,Exit Handler Config>> and <<sec_regions,Regions>>, and this section mainly details their encoding.
+
+[[fig_r_type]]
+.R-type instruction format.
+image::Figures/r-type-cropped.svg[width=70%, align=center]
+
+
+**HFI Mode Transition Instructions**
+These include the `hfienter` and `hfiexit` instructions. `hfienter`'s 4-bit option vector comes from `rs1` and its `rd` field is invalid. The `hfiexit` instruction does not have any source or destination register, and thus these fields are all invalid in the instruction.
+
+**Exit Handler Instructions**
+These instructions include `hfisetexithandler` and `hfigetexithandler`. They only take one operand from `rs1` holding the address of the exit handler and configure the handler for sandbox exits and syscalls in the dedicated internal register `hfiexithandlerreg`.
+
+**Region Manipulation Instructions**
+These include the region-configure instruction `hfiselectregion`, the region size instructions `hfisetregionbase`, `hfigetregionbase`, `hfisetregionbound`, `hfigetregionbound`, and the region permissions `hfisetregionpermission`, `hfigetregionpermission`, `hfiresetregions`. All of these instructions directly interact with the corresponding internal registers, which are otherwise inaccessible. `hfiselectregion`, `hfisetregionbase`, `hfisetregionbound` and `hfisetregionpermission` all take a single operand from `rs1`, respectively the region number, the base address of the region and the mask (implicit region) or bound (explicit region) for the region. The remaining "get" instructions set the `rd` register based on these internal registers.
+
+**Support for More HFI Version**
+In the future standard profile we aim to develop (detailed in <<subsec_standard_profile,the standard profile section>>), up to 4 explicit data regions are supported. Therefore, an instruction (`hfisetcurrexplicitdataregion` and `hfigetcurrexplicitdataregion`) that sets which explicit region the h-prefixed instructions will use is needed. `hfisetcurrexplicitdataregion` always precedes the h-prefixed instructions and takes the region number from its `rs1`. The instruction pair also double-checks the region number to ensure that it references an explicit region.
+
+[[tab_enc_non_h]]
+.Encoding for R-type Non-h-prefixed Instructions
+[cols="3,3,3,^3,3,3", options="header"]
+|===
+| funct3 | funct7 | Instruction | funct3 | funct7 | Instruction
+| 000 | 0000000 | `hfienter` | 010 | 0000000 | `hfiselectregion`
+| 000 | 0000001 | `hfiexit` | 010 | 0000001 | `hfisetregionbase`
+| 000 | 0000010 | `hfientertarget` | 010 | 0000010 | `hfigetregionbase`
+| 001 | 0000000 | `hfisetexithandler` | 010 | 0000011 | `hfisetregionpermission`
+| 001 | 0000001 | `hfigetexithandler` | 010 | 0000100 | `hfigetregionpermission`
+| 011 | 0000000 | `hfigetcurrexplicitdataregion` | 010 | 0000101 | `hfisetregionbound`
+| 011 | 0000001 | `hfisetcurrexplicitdataregion` | 010 | 0000110 | `hfigetregionbound`
+| | | | 010 | 0000111 | `hfiresetregions`
+|===

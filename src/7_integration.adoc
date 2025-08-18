@@ -1,0 +1,51 @@
+[[sec_using_hfi]]
+== Using HFI
+
+Here we explore how HFI's features are used to create sandboxing runtimes in userspace, and the HFI support needed from the operating systems.
+
+=== Sandboxing in Userspace
+
+Suppose we have a sandbox runtime (e.g. part of an application implementing a Wasm FaaS server, or a library sandboxing framework cite:[rlbox]), that is ready to create new sandbox.
+We assume that the runtime has reserved some memory for the sandbox (i.e., the sandbox memory), has placed the input for the sandboxed code in a memory buffer, and the sandboxed code itself is separated from other code and mapped in an isolated contiguous portion of the address space. Our runtime can now take the following steps:
+
+**Setting up regions**
+To start, our runtime sets up access to the code, heap, and input memory so our application has everything it needs once the sandbox starts, it does this using the `hfisetregionsize`, `hfisetregionpermission` instructions to setup and enable regions that grant access to the allocated heap and inputs, and the application code. If no code regions are mapped, HFI will immediately trap after `hfi_enter` is called, as the processor will not be able to fetch instructions.
+
+What type of regions the runtime will use, as as how the sandbox is configured will depend on if it is sandboxing a native or SFI (e.g. Wasm) based application.
+
+**Sandboxing Native code**
+When sandboxing native code, the code being sandboxed is entirely untrusted, and thus, it cannot be allowed to modify any of HFI's state, or exit the sandbox in unexpected ways, or perform any other operation that would allow it to violate the sandbox's policy. Thus, the sandbox options flags in `hfioptions_t` that are passed to `hfienter` to start the sandbox will: set the `lock_regions` flag to 1 (true), since sandboxed code cannot be trusted to modify regions; set the `redirect_system_calls` flag to 1, as again this code can't be trusted to perform system calls directly; set the `redirect_exit` flag to 1, ensuring all control flow out of the sandbox is redirect to the trusted runtime. The runtime will use an implicit data region to permit the sandboxed code to use of the sandbox memory; the runtime will then ensure the sandboxed code's stack, heap and inputs are part of this implicit region. An implicit code regions will be used to mark the code of the sandbox.
+
+**Sandboxing using SFI runtimes**
+When sandboxing code through SFI runtimes such as a Wasm runtime, sandboxing is handled as a mix of compiler/software-runtime checks as well as hardware checks from HFI. In the scenario, implementer has confidence in the correctness of the SFI's runtime and compiler, and thus their use of HFI is different from sandboxing code, giving it greater flexibility and performance.
+
+For example, on `hfienter` it can set the `lock_regions` flag to 0 (false), allowing the compiler/runtime to modify regions with `hfisetregionsize` and `hfisetregionpermission` without having to exit the sandbox. This can allow regions to be used more flexibly, e.g. it can load and spilling registers, and never need to exit the sandbox. The `redirect_system_calls` flag can also be set to 0 (false), as the Wasm compiler disallows direct access to system call instructions, ensuring that any system calls made will come from the trusted runtime, this can eliminate the overhead of unecessary sandbox exits. What the redirect_exit flag will be set to depends on the SFI implementation, it may set this flag to false and opt to let sandbox exit's fall through to minimize overhead, since it can ensure that it knows that it can control whatever instruction follows an `hfiexit`, or it may opt to set it to true, and setup an exit_handler.
+
+For granting access to memory, the runtime will use still use implicit regions for code, however, an explicit region(s) will be used for the applications heap(s) and inputs, as the SFI compiler can use h-prefixed instructions for accessing these directly. This allows it to exploit the greater flexibility of explicit regions for sizing and alignment that are necessary to support Wasm and similar systems. Notably, a Wasm runtime in the sandbox may opt to place it's own data into an implicit data region, to ensure Spectre attacks cannot be used to trick the sandbox runtime into leaking its own data.
+
+**Saving context**
+A sandboxing runtime must protect its own execution context such as its stack and contents of CPU registers, before it switches to sandbox code. HFI leaves this mechanism entirely up to software---this flexibility is important for efficiency. For example, if our runtime is running untrusted native code---it will have to use springboards and trampolines cite:[nacl]---lightweight assembly routines that (1) clear registers and switch to a separate stack prior to executing the sandboxed code and (2) restore these registers after the sandboxed is executed. However, if it is running Wasm code, it could opt to use zero-cost transitions cite:[zero-cost] that rely on the compiler to ensure that the sandbox code cannot misuse the stack or scratch registers.
+
+**Setting up an exit handler**
+If our runtime needs an exit handler either to handle `hfiexit` or redirected system calls, it will need to setup an exit handler with `hfisetexithandler`. This exit handler is implemented as a normal function call in the runtime that takes no arguments. It will query the `hfiexitreason` CSR to find out why it was invoked.
+
+**Entering the sandbox**
+Having taken all these steps, our runtime is ready to start the sandbox. Once it calls `hfi_enter`, HFI mode is enabled, and the next instruction that runs will be inside a sandbox.
+
+**The exit handler (`hfiexit` and system calls)**
+When the exit handler is called after the sandbox exits, it will transfer control to the exit handler function in the runtime, which will check a control and status register (CSR) to identify the cause of the exit, and respond appropriately.
+
+For example, for sandbox exits, it will need to save context unless the sandbox execution has completed. Similarly for system calls, it will need to save context, but then also execute whatever additional logic is need to check the parameters of the system call for safety and finally invoking the system call cite:[pku-pitfalls].
+
+[[subsec_os_integration]]
+=== OS (and VMM) integration
+
+HFI is designed to require only minimal changes/support from the OS kernel. HFI requires support from OS kernels in two areas:
+
+**Handling HFI faults**
+A fault may occur in HFI mode for to two reasons: (1) normal processor traps such as division by zero. (2) HFI policy violations. In both cases, when the processor traps into the kernel, HFI enforcement is disabled so as not to disrupt kernel execution, and the trap is handled through all the normal OS signal mechanisms (This is automatic as HFI hardware checks are only applied to userspace code). When an instruction can traps due to some HFI policy violation, the normal trap mechanism for the current hart is employed. HFI introduces a new trap code, `hfi_fault` to support this.
+
+When an HFI trap occurs, additional details about the cause are stored in the `hfifaultstatusreg`. A kernel trap handler can immediately read and store this state into the process struct for the current process, so it can be queried by a signal handler. The OS then invokes the standard signal handler registered by the application for memory access violations. The OS must invoke the signal handler with HFI disabled; if the signal handler returns control to the OS, the OS will re-enable HFI prior to resuming the faulting process.
+
+**Process scheduling**
+The kernel must save and restore HFI state (stored in internal registers) when switching between processes/VMs etc. This can be performed using the HFI manipulation instructions `hfiresetregions`, `hfisetregionpermission`, `hfisetregionsize`, `hfigetregionsize`, etc. To know whether HFI mode is currently enabled by the user space process, more privileged code can check the state of the `hfiusermodeenabled` status register.

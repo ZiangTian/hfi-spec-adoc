@@ -1,0 +1,21 @@
+[[sec_overview]]
+== Overview
+
+**HFI mode**
+HFI adds a new processor mode (HFI mode). If HFI is enabled, code running on a hart is "sandboxed", i.e, execution is restricted according to: (a) a set of region registers, that grant access to memory (see <<sec_regions,Section on Regions>>), (b) a register with the sandbox exit handler, where system calls and sandbox exits are redirected to (see <<sec_exit_handler,Section on Exit Handler>>), and (c) a register with sandbox option flags that modify sandbox semantics (see <<sec_sbx_setup,Section on Sandbox Setup>>). HFI's mode and region registers operate on a per-hart basis; they are not synchronized across harts.
+
+For convenience, we refer to the code using HFI to sandbox other code as the _sandboxing runtime_. With a few exceptions (<<subsec_os_integration,Section on OS Integration>>), HFI is enabled when a sandboxing runtime executes an `hfienter` instruction, and disabled when sandboxed code executes an `hfiexit` instruction, which transfers control back to the sandboxing runtime. The runtime is responsible for saving and restoring context appropriately, and can use HFI to multiplex many sandboxes across harts, scheduling them as it sees fit. HFI enables sandboxing through two mechanisms:
+
+**Interposition**
+HFI supports interposition on all paths out of the sandbox including when a sandbox exits (through the `hfiexit` instruction), system calls---and by extension, signals. Thus, a runtime can use HFI to mediate all control flow and access to sensitive OS resources.
+
+**Regions**
+HFI offers memory and control isolation using a finite set of _regions_---portions of a processes' virtual memory described by _base_ (start address for the region) and _bound_ (size of the region). By default, an HFI sandbox has no regions defined and thus cannot access memory to either access data or execute code. To grant access, the sandboxing runtime configures regions of memory allowed by, that are stored in internal region registers, and to configured using several dedicated instructions (e.g. `hfisetregionsize`, `hfisetregionpermission`). Regions come in three types:
+
+* _Implicit data regions_: grant read and/or write memory access to a portion of memory, and are applied to every memory access performed by sandboxed code. For example, if sandboxed code executes an instruction---"load address X into register Y"---HFI will ensure that at least one of the implicit regions has a range that includes "X", and then applies the permissions from the first matching region.
+
+* _Implicit code regions:_ are similarly used to grant execute permissions, and applied to every instruction fetch a sandboxed program executes.
+
+* _Explicit data regions:_ are used to grant read/write access to sandboxed programs, but only through dedicated instructions that perform region-relative memory operations. Specifically, loads and stores to these regions are performed as offsets into the region using new h-prefixed variants the standard RISC-V memory instructions such as `hlw` and `hsw`. The offsets are checked to ensure they remain within the explicit region.
+
+The new instructions introduced by HFI are shown in <<fig_hfi_interface,Figure on HFI Interface>>, while the new control and status registers as well as internal registers are shown in in <<fig_hfi_csrs,Figure on HFI CSRs>>.

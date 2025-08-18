@@ -1,0 +1,76 @@
+= Preliminary RISC-V HFI Spec (v1)
+Authors: Shravan Narayan (UT Austin), Tal Garfinkel (UC San Diego),Ravi Sahita (Rivos), Deepak Gupta (Rivos), Ziang Tian (UT Austin)
+include::../docs-resources/global-config.adoc[]
+:docgroup: RISC-V Task Group
+:description: Preliminary RISC-V HFI Spec (v1)
+:revdate: 7/2025
+:revnumber: 1.0
+:revremark: This document is under development. Expect potential changes.
+:revinfo:
+:preface-title: Preamble
+:colophon:
+:appendix-caption: Appendix
+// https://docs.asciidoctor.org/asciidoc/latest/macros/images-directory/
+:imagesdir: ../docs-resources/images
+:title-logo-image: image:risc-v_logo.png["RISC-V International Logo",pdfwidth=3.25in,align=center]
+// Settings:
+:experimental:
+:reproducible:
+//:WaveDromEditorApp: app/wavedrom-editor.app
+:imagesoutdir: images
+//:srcdir: src
+:bibtex-file: src/main.bib
+:bibtex-order: alphabetical
+:bibtex-style: apa
+:icons: font
+:lang: en
+:listing-caption: Listing
+:sectnums:
+:toc: left
+:toclevels: 4
+:source-highlighter: pygments
+ifdef::backend-pdf[]
+:source-highlighter: coderay
+endif::[]
+:data-uri:
+:hide-uri-scheme:
+:stem: latexmath
+:footnote:
+:xrefstyle: short
+
+[preface]
+== List of figures
+list-of::image[hide_empty_section=true, enhanced_rendering=true]
+
+[preface]
+== List of tables
+list-of::table[hide_empty_section=true, enhanced_rendering=true]
+
+[preface]
+== List of listings
+list-of::listing[hide_empty_section=true, enhanced_rendering=true]
+
+[WARNING]
+.This document is in the link:http://riscv.org/spec-state[Development state]
+====
+Expect potential changes. This draft specification is likely to evolve before
+it is accepted as a standard. Implementations based on this draft
+may not conform to the future standard.
+====
+
+[preface]
+include::contributors.adoc[]
+
+include::1_purpose.adoc[]
+include::2_overview.adoc[]
+include::3_sandbox_setup.adoc[]
+include::4_exit_handler.adoc[]
+include::5_regions.adoc[]
+include::6_regs.adoc[]
+include::7_integration.adoc[]
+include::8_encoding.adoc[]
+include::9_pending.adoc[]
+
+// // The index must precede the bibliography
+// include::index.adoc[]
+// include::bibliography.adoc[]

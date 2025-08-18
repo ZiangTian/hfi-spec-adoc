@@ -13,10 +13,10 @@
 # the Doc Template for RISC-V Extensions.
 
 DOCS := \
-	spec-sample.adoc
+	main.adoc
 
 DATE ?= $(shell date +%Y-%m-%d)
-VERSION ?= v0.0.0
+VERSION ?= v1
 REVMARK ?= Draft
 DOCKER_IMG := docker.io/riscvintl/riscv-docs-base-container-image:latest
 DOCKER_BIN ?= docker
@@ -50,7 +50,6 @@ OPTIONS := --trace \
            -a mathematical-format=svg \
            -a revnumber=${VERSION} \
            -a revremark=${REVMARK} \
-           -a revdate=${DATE} \
            -a pdf-fontsdir=docs-resources/fonts \
            -a pdf-theme=docs-resources/themes/riscv-pdf.yml \
            $(XTRA_ADOC_OPTS) \

@@ -1,0 +1,48 @@
+[[sec_regs]]
+== New Internal Registers
+
+HFI stores state for the current sandbox in internal registers including: (1) the sandbox status (2) the exit handler (3) region configuration (4) the cause and status of HFI induced faults (traps). These are detailed in <<fig_hfi_csrs,Figure on HFI CSRs>>.
+
+=== Sandbox Status Register
+
+**Fields**
+The sandbox status, stored in the `hfistatusreg` internal register, is read-only to userspace software, but writable by kernel code. The contents of the `hfistatusreg` register are as follows:
+
+* _hfi_usermode_enabled_ (1-bit)_: is updated automatically during `hfienter` (set to true), `hfiexit` (set to false), and when the exit handler is called (set to false).
+* _hfi_exit_reason_ (2-bit)_: indicates the reason for the last sandbox exit. Exit due to `hfiexit` would leave this set to 1. Exit due to a system call with leave this set to 2.
+* _hfi_exit_pc_ (60-bit)_: indicates the PC of the instruction causing the last exit. The first 2-bits and the last 2-bits of the PC are dropped and are assumed to be zero. Thus 60-bits of the PC are stored.
+
+**Serialization Caveat**
+The `hfistatusreg` register should support updates via register renaming to support the performance expectations of hardware sandboxing. These values are expected to change frequently (once in few thousand instructions), and serializing this register updates with techniques like score-boarding will hinder practical adoption.
+
+=== Exit Handler Registers
+
+**Fields**
+The address of the sandbox exit handler is stored in the `hfiexithandlerreg` internal register. When a sandboxed hart traps or executes an `hfiexit` instruction, the Program Counter (PC) is set to the value stored in this register. This register is written to using the `hfisetexithandler` instruction and read using the `hfigetexithandler` instruction. The contents of the `hfiexithandlerreg` register are as follows:
+
+* _Exit Handler Address (60-bit)_: indicates the address of the exit handler set for current sandbox. The first 2 bits and last 2 bits of this address are dropped and assumed to be zero.
+
+**Serialization Caveat**
+The exit handler of the sandbox is stored in the `hfiexithandlerreg` internal register and can be set or read via the `hfisetexithandler` and `hfigetexithandler` instructions. Since the register is not expected to be frequently updated, it's updates may be scoreboarded if needed.
+
+=== Region Registers
+
+**Fields**
+There are three sets of internal registers dedicated to region configurations required by hfi: bounds registers, permissions registers, and selector registers. Different version of HFI may require different numbers of these registers, as discussed in <<subsec_standard_profile,the section on standard profiles>>. Bounds registers specify the bounds and sizes of a region. Each implicit region (data or code) has a 64-bit prefix register and a 64-bit mask register, while each explicit region has a 64-bit base register, a 64-bit bound register, and a 1-bit field specifying whether this is a large region or small region. Permissions registers specify whether a region can be read, written, or executed. Each data region has a 1-bit write field and a 1-bit read field, while each code region has a 1-bit execute field. On top of these registers is the selector register, which contains the region number of the region currently being configured. Its only field is a 32-bit `region_number_t`.
+
+**Serialization Caveat**
+The region registers cannot be directly named, and must instead be modified or accessed through HFI instructions (e.g. `hfigetregionsize`). Since these registers should updated whenever a sandbox switch occurs, updates to these registers should ideally be supported through register renaming; however, implementations may choose to use the slightly less expensive scheme, as illustrated in <<fig_region_reg_example,Figure on Region Register Example>>.
+In particular, implementations can configure the regions outside the sandbox without serializing, and defer fencing to when an `hfienter` instruction executes. This way, updates to these registers do not fence, and the `hfienter` instruction waits for all pending region register updates to complete. When a sandbox is enabled (`hfiusermodeenabled` set to 1), region register updates are not permitted if `lock_regions` option is set to 0. In the case that the region is not locked, however, all updates to the region register within the sandbox must serialize.
+
+=== Fault Registers
+
+**Fields**
+The result of an HFI fault due to an HFI policy violation is stored in the `hfifaultstatusreg` register. This register stores the precise cause of an HFI induced fault (trap). Since the register is not expected to be frequently updated, it’s updates may be scoreboarded if needed. Information in `hfifaultstatusreg` is readable in user space so the runtime can respond appropriately, and read-write in the kernel so that this state can be saved/restored as part of the process context, as multiple processes may be using HFI, and fault delivery is asynchronous. This register has four fields:
+
+* _hfi_fault_occurred_ (1-bit)_: is a bit that indicates that an hfi fault has occurred.
+* _hfi_fault_region_ (8-bit)_: indicates which region the fault occured in, if the fault was do to an explicit region trap (out of bounds or insufficient permissions), it will contain the number of the region that caused the fault, i.e., the operand to an h-prefixed instruction. If the fault was caused by an implicit region i.e. insufficient permission to access a matched region,it will contain the number of the region. If the fault was cause because no implicit region matched an operation, it will contain 0.
+* _hfi_fault_op_ (2-bit)_: indicates the operation that faulted, this will be a `LOAD_FAULT` or `STORE_FAULT` for a failed load or store, or `FETCH_FAULT` for a failed instruction fetch.
+* _hfi_fault_type_ (1-bit)_: indicates the type of fault. If `OUT_OF_BOUNDS`, it indicates that an operation was out of bounds if it was explicit region fault , or that no implicit region matched the operation (in this case `hfi_fault_region` will be equal to zero). If `INSUFFICIENT_PERMISSIONS`, either an explicit region had insufficient permissions for an access, or whatever implicit region matched the operation did not have sufficient permissions.
+
+**Design Rationale**
+The `hfienter` and `hfiexit` instructions modify the various bits of the `hfistatusreg` register. The updates to this register must be fast to allow rapid entries and exits to HFI mode; thus this must be supported by register renaming. Region registers are updated frequently as well when switching between different sandboxes. While this would ideally support register renaming for efficient register updates, an alternate scheme that ensures a single serialization (on entry into the sandbox) for a batch of region updates prior to entry, would provide adequate performance. Finally, updates to the region configuration within the sandbox should serialize, as an updates during speculative execution may allow Spectre-style attacks to break out of the sandbox.

@@ -1,0 +1,21 @@
+[[sec_exit_handler]]
+== Configuring the Exit handler
+
+HFI supports interposition via. redirection on all paths out of the sandbox including sandbox exits (via. `hfiexit`) and system calls (and by extension signals). As noted, which instructions (system calls and/or `hfiexit`) are redirected is configured through `hfioptions_t`, that is passed as an operand to `hfienter`.
+
+To handle this redirection, an exit handler is setup with the `hfisetexithandler` instruction. This instruction should be invoked prior to `hfiexit`. `hfisetexithandler` takes one operand, a 64-bit register, that holds the address of the exit handler. The current exit handler can be retrieved via the `hfigetexithandler` instruction.
+
+**Behavior**
+The `hfisetexithandler` instruction sets the `hfiexithandlerreg` internal register to the address specified in its operand.
+
+* If `hfiexit` is configured to invoke the exit handler, the `hfiexit` instruction, when executed by sandbox code, will jump to the exit handler _after_ execution (during which `hfiexitreason` in `hfistatusreg` is set to 1 indicating the exit was due to the `hfiexit` instruction).
+
+* If system calls are configured to invoke the exit handler, the system call instruction, when executed by sandbox code, will jump to the exit handler _before_ execution, set the `hfiexitreason` field to 2 indicating the exit was due to a system call, and disable sandboxing by setting the `hfiusermodeenabled` field to 0.
+
+**Faults**
+The `hfisetexithandler` instruction will trap if the CPU is already in HFI mode. If the exit handler is set to a location without code permissions, the behavior of the CPU would be identical to a normal jump to an address without code permissions.
+
+**Design Rationale**
+Sandboxed code will invoke `hfiexit` to exit the sandbox. We must ensure that the sandboxed code always returns control to the sandboxing runtime after exits, which means, invocation of `hfiexit` should return control to trusted code. Thus, we have added support for redirecting all invocations of `hfiexit`.
+
+Sandboxed code can also invoke system calls; since HFI's restrictions don't apply to kernel code, system calls could be used to bypass isolation enforced by the hardware cite:[pku-pitfalls]. Thus, trusted code needs the ability to interpose on system calls, so that it can restrict the invocation of unsafe system calls by sandboxed code. Such interposition on system calls could be done using assembly rewriting or using kernel features such as EBPF, however, this is slow and cumbersome. To allow efficient interposition of system calls, HFI provides hardware support to redirect system calls. When enabled, system calls simply act like a jump instruction to the exit handler.

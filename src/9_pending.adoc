@@ -1,0 +1,45 @@
+[[sec_pending_considerations]]
+== Pending Design Considerations
+
+Here, we include topics that we believe merit further discussion but which we have not fully resolved for inclusion in the specification.
+
+=== Streamlining Control Transfers for Native Binaries
+
+When sandboxing unmodified native binaries, we would ideally like control transfers into and out of the sandbox library to require minimal overhead and complexity. With a few small changes, we could make this simpler than what `hfienter` and `hfiexit` offer today.
+
+At present, control transfers require redirecting control flow through small stubs (trampolines) that need to be mapped by the sandbox runtime into the sandboxed library address space, this adds complexity and overhead.
+
+For example, consider a case where a host application has uses a library sandboxed with HFI; the applications want to invoke a function `foo()` in the library. To call `foo()`, it will need trampoline code---application code that performs a context switch by saving the current registers, switching the stack register to point to memory inside a region, enabling HFI and transferring control to `foo()`. This is mostly straightforward. However, once `foo` finishes executing (`foo` executes a return instruction), execution would attempt to return to the trampoline code---an operation that would fail as the trampoline code is not part of the sandbox code. Thus the host application, must perform an intermediate step---it must call `foo`, while modifying the return address on the stack to point to a stub within the sandbox, which invokes `hfiexit` and then returns to the trampoline. We could eliminate the need for this stub by dedicating a bit in the return address (e.g. it's least significant bit, as this should be unused as instructions are at least 16 bit aligned) on the stack that indicates that if HFI is enabled, this return should simply invoke `hfiexit`. Similar mechanism could also be applied to eliminating the need for trampolines for direct and indirect calls (i.e. callbacks) to host libraries.
+
+[[subsec_standard_profile]]
+=== HFI Versions (Profiles)
+
+We aim to support multiple versions (profiles) for HFI to ensure we can support the myriad of RISC-V uses cases from embedded devices to server class CPUs. The two versions we currently aim to support are a minimal profile aka version 0, and a standard profile aka version 1. The key difference between these two is the number of supported regions. Versions may also be used to incorporate additional features in the future. Software can check what version is supported as described in <<sec_sbx_setup,the sandbox setup section>>.
+
+The minimal profile described in this document supports: 1 implicit code region, 1 implicit data region and 1 explicit data region. The additional standard profile supports: 2 implicit code regions, 4 implicit data regions, and 4 explicit data regions. These regions are numbered as follows: explicit data region 1, implicit data region 1 and implicit code region 1 are regions 1, 2, and 3 in both profiles. In the standard profile: explicit data region 2, 3, and 4 are regions 4, 5, and 6 respectively; implicit data region 2, 3, and 4 are regions 7, 8, and 9 respectively; implicit code region 2 is region 10. Additionally the permissions bit vector operand specified in the `hfisetregionpermission` and `hfigetregionpermission` instructions is also expanded to accommodate region permissions in the same order.
+
+**Design Rationale**
+Regions exact some cost in terms of circuit area, and differing trade-offs may make sense for different use cases. Obviously more regions facilitate efficient access to more data and code concurrently, and can simplify runtime implementation.
+
+// T---for example, a server side
+// Wasm runtime may prefer the standard profile to support efficient concurrent
+// jaccess to multiple address spaces e.g. to support Wasm
+// multi-memories cite:[wasm-multi-memory] or the component
+// model cite:[wasm-component-model], or for sandboxing libraries where multiple
+// disjoint buffers are being shared across the sandbox boundary.
+
+While the minimal profile is limited in the number of regions, this can still offer meaningful benefits for certain use cases without significant concurrency or memory sharing. For example, the Google Chrome browser's Ubercage JIT isolation scheme cite:[v8-sbx] would be able to leverage this minimal profile for its isolation requirements cite:[v8-sbx-hfi].
+
+The standard profile offers an expanded the number of regions, the particular number of regions was inspired by uses cases such as leveraging WebAssembly for efficient isolation of libraries from applications, and efficient isolation of different clients' code in serverless settings cite:[hfi]. The main observation here is that there is greater concurrency and sharing is present than simple use cases, but this can nevertheless be handled efficiently with a handful of regions. For uses cases that need additional regions, this can be achieved by spilling and restoring regions similar to how this is done with general-purpose registers.
+
+Two additional instruction are required to support the standard profile with it's multiple explicit regions.
+
+`hfi_set_curr_explicit_data_region`(_region_number_t_)
+
+`hfi_get_curr_explicit_data_region`() -> _region_number_t_
+
+These instructions are used to set which explicit region the h-prefixed instructions will utilize.
+
+=== HFI in M-mode or S-mode
+
+We plan to add support for HFI in S-mode. Relatively small changes are necessary, however, we have not yet done a full analysis of how privileged instructions are handled. HFI support in m-mode may similarly be possible, but requires additional analysis for hardware implementation details.

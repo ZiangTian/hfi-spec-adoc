@@ -1,0 +1,10 @@
+== Contributors
+
+This HFI RISC-V specification has been contributed to directly or indirectly by:
+
+[%hardbreaks]
+* Shravan Narayan <required1@email.com>
+* Tal Garfinkel <required2@email.com>
+* Ravi Sahita <required3@email.com>
+* Deepak Gupta <required4@email.com>
+* Ziang Tian <required5@email.com>
