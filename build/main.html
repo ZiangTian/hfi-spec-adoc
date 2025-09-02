@@ -539,7 +539,7 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <p>Deepak Gupta &lt;<a href="mailto:required4@email.com">required4@email.com</a>&gt;</p>
 </li>
 <li>
-<p>Ziang Tian &lt;<a href="mailto:required5@email.com">required5@email.com</a>&gt;</p>
+<p>Ziang Tian &lt;<a href="mailto:ztian@utexas.edu">ztian@utexas.edu</a>&gt;</p>
 </li>
 </ul>
 </div>
@@ -872,13 +872,13 @@ The sandbox status, stored in the <code>hfistatusreg</code> internal register, i
 <div class="ulist">
 <ul>
 <li>
-<p><em>hfi_usermode_enabled</em> (1-bit)_: is updated automatically during <code>hfienter</code> (set to true), <code>hfiexit</code> (set to false), and when the exit handler is called (set to false).</p>
+<p><em>hfi_usermode_enabled</em> (1-bit): is updated automatically during <code>hfienter</code> (set to true), <code>hfiexit</code> (set to false), and when the exit handler is called (set to false).</p>
 </li>
 <li>
-<p><em>hfi_exit_reason</em> (2-bit)_: indicates the reason for the last sandbox exit. Exit due to <code>hfiexit</code> would leave this set to 1. Exit due to a system call with leave this set to 2.</p>
+<p><em>hfi_exit_reason</em> (2-bit): indicates the reason for the last sandbox exit. Exit due to <code>hfiexit</code> would leave this set to 1. Exit due to a system call with leave this set to 2.</p>
 </li>
 <li>
-<p><em>hfi_exit_pc</em> (60-bit)_: indicates the PC of the instruction causing the last exit. The first 2-bits and the last 2-bits of the PC are dropped and are assumed to be zero. Thus 60-bits of the PC are stored.</p>
+<p><em>hfi_exit_pc</em> (60-bit): indicates the PC of the instruction causing the last exit. The first 2-bits and the last 2-bits of the PC are dropped and are assumed to be zero. Thus 60-bits of the PC are stored.</p>
 </li>
 </ul>
 </div>
@@ -896,7 +896,7 @@ The address of the sandbox exit handler is stored in the <code>hfiexithandlerreg
 <div class="ulist">
 <ul>
 <li>
-<p><em>Exit Handler Address (60-bit)</em>: indicates the address of the exit handler set for current sandbox. The first 2 bits and last 2 bits of this address are dropped and assumed to be zero.</p>
+<p><em>Exit Handler Address</em> (60-bit): indicates the address of the exit handler set for current sandbox. The first 2 bits and last 2 bits of this address are dropped and assumed to be zero.</p>
 </li>
 </ul>
 </div>

@@ -8,9 +8,9 @@ HFI stores state for the current sandbox in internal registers including: (1) th
 **Fields**
 The sandbox status, stored in the `hfistatusreg` internal register, is read-only to userspace software, but writable by kernel code. The contents of the `hfistatusreg` register are as follows:
 
-* _hfi_usermode_enabled_ (1-bit)_: is updated automatically during `hfienter` (set to true), `hfiexit` (set to false), and when the exit handler is called (set to false).
-* _hfi_exit_reason_ (2-bit)_: indicates the reason for the last sandbox exit. Exit due to `hfiexit` would leave this set to 1. Exit due to a system call with leave this set to 2.
-* _hfi_exit_pc_ (60-bit)_: indicates the PC of the instruction causing the last exit. The first 2-bits and the last 2-bits of the PC are dropped and are assumed to be zero. Thus 60-bits of the PC are stored.
+* _hfi_usermode_enabled_ (1-bit): is updated automatically during `hfienter` (set to true), `hfiexit` (set to false), and when the exit handler is called (set to false).
+* _hfi_exit_reason_ (2-bit): indicates the reason for the last sandbox exit. Exit due to `hfiexit` would leave this set to 1. Exit due to a system call with leave this set to 2.
+* _hfi_exit_pc_ (60-bit): indicates the PC of the instruction causing the last exit. The first 2-bits and the last 2-bits of the PC are dropped and are assumed to be zero. Thus 60-bits of the PC are stored.
 
 **Serialization Caveat**
 The `hfistatusreg` register should support updates via register renaming to support the performance expectations of hardware sandboxing. These values are expected to change frequently (once in few thousand instructions), and serializing this register updates with techniques like score-boarding will hinder practical adoption.
@@ -20,7 +20,7 @@ The `hfistatusreg` register should support updates via register renaming to supp
 **Fields**
 The address of the sandbox exit handler is stored in the `hfiexithandlerreg` internal register. When a sandboxed hart traps or executes an `hfiexit` instruction, the Program Counter (PC) is set to the value stored in this register. This register is written to using the `hfisetexithandler` instruction and read using the `hfigetexithandler` instruction. The contents of the `hfiexithandlerreg` register are as follows:
 
-* _Exit Handler Address (60-bit)_: indicates the address of the exit handler set for current sandbox. The first 2 bits and last 2 bits of this address are dropped and assumed to be zero.
+* _Exit Handler Address_ (60-bit): indicates the address of the exit handler set for current sandbox. The first 2 bits and last 2 bits of this address are dropped and assumed to be zero.
 
 **Serialization Caveat**
 The exit handler of the sandbox is stored in the `hfiexithandlerreg` internal register and can be set or read via the `hfisetexithandler` and `hfigetexithandler` instructions. Since the register is not expected to be frequently updated, it's updates may be scoreboarded if needed.

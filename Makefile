@@ -18,23 +18,24 @@ DOCS := \
 DATE ?= $(shell date +%Y-%m-%d)
 VERSION ?= v1
 REVMARK ?= Draft
-DOCKER_IMG := docker.io/riscvintl/riscv-docs-base-container-image:latest
-DOCKER_BIN ?= docker
-ifneq ($(SKIP_DOCKER),true)
-	DOCKER_IS_PODMAN = \
-		$(shell ! ${DOCKER_BIN} -v 2>&1 | grep podman >/dev/null ; echo $$?)
-	ifeq "$(DOCKER_IS_PODMAN)" "1"
-		DOCKER_VOL_SUFFIX = :z
-	endif
 
-	DOCKER_CMD := \
-		${DOCKER_BIN} run --rm \
-			-v ${PWD}:/build${DOCKER_VOL_SUFFIX} \
-			-w /build \
-			${DOCKER_IMG} \
-			/bin/sh -c
-	DOCKER_QUOTE := "
-endif
+# DOCKER_IMG := docker.io/riscvintl/riscv-docs-base-container-image:latest
+# DOCKER_BIN ?= docker
+# ifneq ($(SKIP_DOCKER),true)
+# 	DOCKER_IS_PODMAN = \
+# 		$(shell ! ${DOCKER_BIN} -v 2>&1 | grep podman >/dev/null ; echo $$?)
+# 	ifeq "$(DOCKER_IS_PODMAN)" "1"
+# 		DOCKER_VOL_SUFFIX = :z
+# 	endif
+
+# 	DOCKER_CMD := \
+# 		${DOCKER_BIN} run --rm \
+# 			-v ${PWD}:/build${DOCKER_VOL_SUFFIX} \
+# 			-w /build \
+# 			${DOCKER_IMG} \
+# 			/bin/sh -c
+# 	DOCKER_QUOTE := "
+# endif
 
 SRC_DIR := src
 BUILD_DIR := build
