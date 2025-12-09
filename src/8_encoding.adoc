@@ -10,7 +10,7 @@ HFI introduces two sets of new instructions: h-prefixed instructions that mimic 
 In order to provide full support for modern RV64GV processors, multiple extensions need to be supported in addition to the base integer instruction set. Specifically, HFI needs to accommodate memory access instructions in the Atomic extension (A), the Floating Point extensions of different precisions (F, D, Q), and the Vector extension (V).
 
 **Base Loads and Stores**
-H-prefixed base loads and stores automatically check against the bounds specified by the explicit region registers before serviced to memory. The base address stored in `rs1` is always ignored, and replaced with the base address of the explicit region.
+H-prefixed base loads and stores automatically check against the bounds specified by the explicit region registers before serviced to memory. The effective address (EA) calculation is identical to the native base load and store instructions, except that after the EA is obtained, the base of the region is added on top of the EA to get the final address EA'. The bound check compares EA against the region bound. Specifically, implementations can choose to the place the bound check logic in parallel with the final EA' computation and/or TLB lookup to minimize performance overhead.
 
 [[fig_enc_base]]
 .H-prefixed Base Loads and Stores
@@ -31,7 +31,7 @@ image::Figures/enc-base-cropped.svg[width=70%, align=center]
 
 
 **Floating Point Loads and Stores**
-The floating point extensions include the single-precision, double-precision, and quad-precision extensions, all of which are encoded under the same opcode, and differentiated with a 3-bit width field. FP loads and stores behaves the same way as base loads and stores, only its register operands reference the floating point register file rather than the integer one. H-prefixed FP loads and stores still ignores and replaces the base address in `rs1` with the base address of the explicit region.
+The floating point extensions include the single-precision, double-precision, and quad-precision extensions, all of which are encoded under the same opcode, and differentiated with a 3-bit width field. FP loads and stores behaves the same way as base loads and stores, only its register operands reference the floating point register file rather than the integer one.
 
 [[fig_enc_fp]]
 .H-prefixed floating point loads and stores.
@@ -74,7 +74,7 @@ image::Figures/enc-vec-cropped.svg[width=80%, align=center]
 |===
 
 **Atomic Memory Operations**
-The atomic extension provides instructions to atomically read, modify, and write back to memory between multiple harts running in the same memory space, including general-purpose load and stores, and fetch-and-op instructions that atomically performs specific computations on memory contents fetched. Unlike other loads/stores instructions, the atomic instructions are encoded in R-type instruction format, using a simple, absolute addressing modes without a base address. This diverges from HFI's nature of relative addressing. Therefore, while bounding the memory access, HFI cannot simply replace the base address and only check the offset with a single comparator. Instead, the hardware must first calculate the offset of the target address from the base address with a full subtractor. The offset can then be bounded as per usual. Implementations should account for this divergence and supply another full adder. Alternatively, it is also possible to reuse existing hardware (e.g. the effective address computation adders) to fulfill this full subtraction, at the cost of potentially adding a pipeline stage.
+The atomic extension provides instructions to atomically read, modify, and write back to memory between multiple harts running in the same memory space, including general-purpose load and stores, and fetch-and-op instructions that atomically performs specific computations on memory contents fetched. Similar to the base load and store instructions, h-prefixed atomic memory operations first compute the effective address (EA) in the same way as their native counterparts, then add the base of the explicit region to get the final address EA'. Meanwhile, the EA is checked against the region bound before proceeding with the atomic operation.
 
 [[fig_enc_amo]]
 .H-prefixed atomic loads, stores and other atomic operations.

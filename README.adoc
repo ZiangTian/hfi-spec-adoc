@@ -62,8 +62,10 @@ git clone --recurse-submodules https://github.com/riscv/docs-spec-template.git &
 To start the build process, run:
 
 ```shell
-cd ./docs-spec-template && make build
+make build
 ```
+
+The `main.pdf` file will be generated in the `./build/` directory upon successful completion of the build process.
 
 The link:Makefile[] script will check the availability of Docker on your system:
 
