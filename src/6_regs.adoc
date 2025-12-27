@@ -1,7 +1,7 @@
 [[sec_regs]]
 == New Internal Registers
 
-HFI stores state for the current sandbox in internal registers including: (1) the sandbox status (2) the exit handler (3) region configuration (4) the cause and status of HFI induced faults (traps). These are detailed in <<fig_hfi_csrs,Figure on HFI CSRs>>.
+HFI stores state for the current sandbox in internal registers including: (1) the sandbox status (2) the exit handler (3) region configuration (4) the cause and status of HFI induced faults (traps).
 
 === Sandbox Status Register
 
@@ -28,10 +28,10 @@ The exit handler of the sandbox is stored in the `hfiexithandlerreg` internal re
 === Region Registers
 
 **Fields**
-There are three sets of internal registers dedicated to region configurations required by hfi: bounds registers, permissions registers, and selector registers. Different version of HFI may require different numbers of these registers, as discussed in <<subsec_standard_profile,the section on standard profiles>>. Bounds registers specify the bounds and sizes of a region. Each implicit region (data or code) has a 64-bit prefix register and a 64-bit mask register, while each explicit region has a 64-bit base register, a 64-bit bound register, and a 1-bit field specifying whether this is a large region or small region. Permissions registers specify whether a region can be read, written, or executed. Each data region has a 1-bit write field and a 1-bit read field, while each code region has a 1-bit execute field. On top of these registers is the selector register, which contains the region number of the region currently being configured. Its only field is a 32-bit `region_number_t`.
+There are three sets of internal registers dedicated to region configurations required by hfi: bounds registers, permissions registers, and selector registers. Different version of HFI may require different numbers of these registers, as discussed in <<subsec_standard_profile,Chapter 9>>. Bounds registers specify the bounds and sizes of a region. Each implicit region (data or code) has a 64-bit prefix register and a 64-bit mask register, while each explicit region has a 64-bit base register, a 64-bit bound register, and a 1-bit field specifying whether this is a large region or small region. Permissions registers specify whether a region can be read, written, or executed. Each data region has a 1-bit write field and a 1-bit read field, while each code region has a 1-bit execute field. On top of these registers is the selector register, which contains the region number of the region currently being configured. Its only field is a 32-bit `region_number_t`.
 
 **Serialization Caveat**
-The region registers cannot be directly named, and must instead be modified or accessed through HFI instructions (e.g. `hfigetregionsize`). Since these registers should updated whenever a sandbox switch occurs, updates to these registers should ideally be supported through register renaming; however, implementations may choose to use the slightly less expensive scheme, as illustrated in <<fig_region_reg_example,Figure on Region Register Example>>.
+The region registers cannot be directly named, and must instead be modified or accessed through HFI instructions (e.g. `hfigetregionsize`). Since these registers should updated whenever a sandbox switch occurs, updates to these registers should ideally be supported through register renaming; however, implementations may choose to use the slightly less expensive scheme.
 In particular, implementations can configure the regions outside the sandbox without serializing, and defer fencing to when an `hfienter` instruction executes. This way, updates to these registers do not fence, and the `hfienter` instruction waits for all pending region register updates to complete. When a sandbox is enabled (`hfiusermodeenabled` set to 1), region register updates are not permitted if `lock_regions` option is set to 0. In the case that the region is not locked, however, all updates to the region register within the sandbox must serialize.
 
 === Fault Registers
