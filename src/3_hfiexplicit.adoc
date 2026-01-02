@@ -1,0 +1,173 @@
+[[sec_hfi_explicit]]
+== Explicit HFI Extension
+
+The Explicit HFI Extension provides hardware support for fine-grained, region-relative addressing. With the Base HFI Extension, which targets unmodified native binaries using absolute virtual addresses, this extension is designed to accelerate SFI runtimes that utilize a linear memory model, such as WebAssembly.
+
+In these SFI systems, sandboxed code accesses memory as an offset into a contiguous heap (linear memory) rather than via raw pointers. The Explicit HFI Extension maps this software model directly to hardware: the "heap" becomes an "explicit data region", and software bound-checks are replaced by dedicated `h-prefixed` instructions. This allows the hardware to enforce precise heap bounds automatically with every memory access, eliminating the performance overhead of software guard instructions.
+
+Addressing in this mode is always relative to the base of the currently _active region_ (by default, explicit data region 1), offering efficient control over access to specific buffers or explicit heaps. HFI provides two different region sizes~(_large/small_), with different granularities. Large regions can address up to 256 TiB (stem:[2^{48}]) and are sized and aligned to multiples of 64K (stem:[2^{16}]). Small regions, in contrast, can only address up to 4GiB (stem:[2^{32}]), but are byte granular in size and alignment. Implicit regions checks are not applied to operations on explicit regions.
+
+To access memory through explicit regions, a program must use the h-prefixed variants of normal load and store instructions (`hlw`, `hsw`, `hlh`, etc.). These instruction target the active region, but can be changed to use a different region as described in <<sub_subsec_standard_profile,Chapter 3.5>>. For example, `hlw x1, A(x0)` will succeed if the address being loaded is falls within explicit region 1, and there is a read permission set on that region, otherwise it will fail.
+
+=== Region Characteristics
+
+HFI provides two different region sizes (_large/small_) for explicit regions to accommodate different granularity needs:
+
+* **Large regions:** Can address up to 256 TiB (stem:[2^{48}]) and are sized and aligned to multiples of 64K (stem:[2^{16}]).
+* **Small regions:** Can only address up to 4GiB (stem:[2^{32}]) but are byte-granular in size and alignment.
+
+Unlike implicit regions which are at lesast 64 bytes, there is no minimum size on small explicit regions, while the smallest large explicit region is 64K. Each explicit region has a 64-bit base register, a 64-bit bound register, and a 1-bit field specifying whether this is a large region or small region.
+
+**Design Rationale**
+
+The large and small region sizes and alignment constraints on explicit regions allow us to implement explicit regions with a single 32-bit comparator. For small regions, HFI checks the least-significant 32-bits is within bounds, and ensures the top bits are zero. For large regions, HFI will drop the first 16-bits, and compare bits 16-48, while checking the top bits are zero. Like Intel x86, RISCV typically support a 48-bit virtual address space, on which this spec is based. This design rationale also applies to Sv39 or Sv57, though the comparator lengths need to be adjusted accordingly.
+
+While allowing regions that support arbitrary address ranges at with any size and alignment is conceptually simpler than specialized large and small regions, our restrictions allow bounds checking with very simple hardware. For base integer loads/stores, HFI's large and small regions constraints can be checked with a single 32-bit comparator, rather than the more costly multiple 64-bit comparators needed to check arbitrary region bounds.
+
+Explicit regions' added granularity is critical for supporting Wasm heaps, which grow in 64K increments cite:[wasm]---while byte granularity is critical for efficiently sharing individual memory objects and sandboxing legacy code, as existing buffers can be shared in-place changing code or allocators.
+
+To safely implement explicit bounds checks, the bounds check must be applied to the operand of an operation (i.e., the address being loaded/stored to) plus the size of the operand, to ensure that longer operations do not exceed bounds checks.
+
+=== Configuring and Accessing Explicit Regions
+
+Configuration for explicit regions take place through the same interface as implicit regions, detailed in <<subsec_manip_regions, Chapter 2.3.2>>. The only difference is that the runtime passes the bound of an explicit region instead of the mask of an implicit region. The runtime would still need to specify a region number to configure before setting the base and bound. 
+
+In addition to the two implicit regions defined in Chapter 2, this chapter defines a third explicit data region with a `region_number_t` of 3. Notably, `hfigetregionbound` returns the mask if the region is implicit (`region_number_t` is 1 or 2) and the bound if the region is explicit (`region_number_t` is 3). With a new explicit data region, bit 5 to 8 in the permission vector now correspond to explicit region 3: bit 5, 6 and 7 indicate enabled state, read and write permissions respectively, while bit 8 indicates if the explicit data region is a large region (i.e., a region with a bound greater than 4GB).
+
+To access memory through explicit regions, a program must use the `h-prefixed` variants of normal load and store instructions (`hlw`, `hsw`, `hlh`, etc.). These instructions target the active region but can be changed to use a different region as described in the Standard Profile section. For example, `hlw x1, A(x0)` will succeed only if the address `Base(ActiveRegion) + A` falls within the active explicit region and the region has read permissions enabled.
+
+In terms of size and alignment, unaligned memory operations that are split by the micro-architecture into independent operations will be checked independently by HFI. If one split faults, the original fused instruction will fault. However, the split operation that is within bounds is allowed to have visible _micro-architectural_ side effects within the sandbox. To safely implement explicit bounds checks, the check must be applied to the effective address plus the size of the operand to ensure that multi-byte operations do not cross the region boundary. The smallest large explicit region is 64K; there is no minimum size on small explicit regions. The behavior of regions that do not meet these minimums is undefined.
+
+When the runtime grants access to memory, it can choose to have an explicit region(s) for the applications heap(s) and inputs, as the SFI compiler can use h-prefixed instructions for accessing these directly. This allows it to exploit the greater flexibility of explicit regions for sizing and alignment that are necessary to support Wasm and similar systems. Notably, a Wasm runtime in the sandbox may opt to place it's own data into an implicit data region, to ensure Spectre attacks cannot be used to trick the sandbox runtime into leaking its own data.
+
+=== Fault Registers
+
+The HFI Explicit extension extends the fault status register defined in <<sec_hfi_faults, Chapter 2.4.4>> with additional fields to capture explicit region faults. Specifically, when an explicit region fault occurs, the `hfi_fault_region` field indicates which explicit region caused the fault (i.e., region number 3). If the faulted region is an explicit region, the `hfi_fault_type` will be set to `OUT_OF_BOUNDS` if the access was out of bound for the explicit region, and `INSUFFICIENT_PERMISSIONS` if the explicit region did not have sufficient permissions.
+
+=== Explicit Instruction Encoding
+
+On top of instructions introduced in HFI base extension, HFI explicit extension further introduces "explicit" memory instructions that mimic native load and store instructions but are used exclusively for explicit regions. These instructions are encoded using opcodes that fail if not implemented, ensuring that binaries using explicit regions cannot run inadvertently on non-HFI hardware. However, binaries that only use HFI's implicit regions would remain backward compatible on CPUs that don't support HFI (albeit without the isolation enforcement).
+
+To provide full support for modern RV64GV processors, HFI defines explicit-region variants for the Base Integer set, as well as the Atomic (A), Floating Point (F, D, Q), and Vector (V) extensions.
+
+#### Base Loads and Stores
+
+H-prefixed base loads and stores automatically check against the bounds specified by the explicit region registers. The effective address (EA) calculation matches native instructions, but the base of the region is added to the EA to form the final virtual address. The bound check compares the EA against the region bound. Implementations typically place the bound check logic in parallel with the final address computation or TLB lookup to minimize the critical path.
+
+[[fig_enc_base]]
+.H-prefixed Base Loads and Stores
+image::Figures/enc-base-cropped.svg[width=70%, align=center]
+
+[[tab_enc_base]]
+.Encodings for h-prefixed base loads and stores
+[cols="3,3,3,^3,3,3", options="header"]
+|===
+| Opcode | Instruction | Funct3 | Opcode | Instruction | Funct3
+| 0001011 | `hlb`  | 000 | 0001011 | `hlwu` | 110
+| 0001011 | `hlh`  | 001 | 0101011 | `hsb`  | 000
+| 0001011 | `hlw`  | 010 | 0101011 | `hsh`  | 001
+| 0001011 | `hld`  | 011 | 0101011 | `hsw`  | 010
+| 0001011 | `hlbu` | 100 | 0101011 | `hsd`  | 011
+| 0001011 | `hlhu` | 101 |         |        |
+|===
+
+#### Floating Point Loads and Stores
+
+H-prefixed Floating Point (FP) loads and stores are encoded under the same opcode as standard FP instructions but differentiated with a 3-bit width field. They behave identically to base loads/stores but utilize the floating point register file.
+
+[[fig_enc_fp]]
+.H-prefixed floating point loads and stores
+image::Figures/enc-fp-cropped.svg[width=70%, align=center]
+
+[[tab_enc_fp]]
+.Encodings for h-prefixed FP loads and stores
+[cols="3,3,3,^3,3,3", options="header"]
+|===
+| Opcode | Instruction | Funct3 | Opcode | Instruction | Funct3
+| 0011111 | `hflw` | 010 | 0111111 | `hfsw` | 010
+| 0011111 | `hfld` | 011 | 0111111 | `hfsd` | 011
+| 0011111 | `hflq` | 100 | 0111111 | `hfsq` | 100
+|===
+
+#### Vector Memory Operations
+
+Vector memory instructions complicate bound checking because a single instruction accesses multiple memory locations. H-prefixed vector instructions reuse the HFI FP opcodes but retain the standard Vector extension encoding for `mop` (addressing mode) and `nf` (segment size) fields.
+
+For strided and indexed instructions: Since these can address disparate parts of memory, HFI checks the entire segment against region bounds for every effective address. To avoid the cost of a full 64-bit adder for every element, implementations can utilize the limited segment size (dictated by `vlen` and `nf`). A cheaper 16-bit adder and 48-bit incrementor (for `vlen <= 4096`) is sufficient to calculate the segment end address.
+
+For unit-stride instructions: These access contiguous memory. Implementations may optimize by only checking the end address of the last segment, though this requires a multiplier.
+
+[[fig_enc_vec]]
+.H-prefixed vector loads and stores
+image::Figures/enc-vec-cropped.svg[width=80%, align=center]
+
+[[tab_enc_vec]]
+.Field encodings for vector loads and stores
+[cols="2,3,2,3,2,3", options="header"]
+|===
+| `mop` | Addressing Mode | `funct3` | Width | `opcode` | Operation
+| 00 | unit stride | 000 | byte | 0011111 | h-load
+| 01 | index (unordered) | 101 | half-word | 0111111 | h-store
+| 10 | constant stride | 110 | word | |
+| 11 | index (ordered) | 111 | double-word | |
+|===
+
+#### Atomic Memory Operations
+
+For H-prefixed Atomic Memory Operations (AMOs), the hardware first computes the effective address (EA) and adds the explicit region base to determine the final address. The EA is checked against the region bound before the atomic operation proceeds.
+
+**Fault Handling**
+Because AMOs represent complex Read-Modify-Write sequences, a specific `AMO_FAULT` encoding (`11`) is introduced in the `hfi_fault_op` field of the fault status register. This differentiates atomic faults from simple load/store faults, mirroring standard RISC-V exception handling. Upon an out-of-bounds AMO, the hardware inhibits the write-back stage to prevent data corruption and traps to the kernel.
+
+[[fig_enc_amo]]
+.H-prefixed atomic loads, stores and other atomic operations
+image::Figures/enc-amo-cropped.svg[width=70%, align=center]
+
+[[tab_enc_base_amo]]
+.Encodings for h-prefixed atomic memory instructions
+[cols="3,3,3,^3,3,3", options="header"]
+|===
+| Opcode | Instruction | Funct5 | Opcode | Instruction | Funct5
+| 0101111 | `hlr` | 00101 | 0101111 | `hamoor` | 01101
+| 0101111 | `hsc` | 00110 | 0101011 | `hamomin` | 01110
+| 0101111 | `hamoswap` | 00111 | 0101011 | `hamomax` | 01111
+| 0101111 | `hamoadd` | 01001 | 0101011 | `hamominu` | 10001
+| 0101111 | `hamoxor` | 01010 | 0101011 | `hamomaxu` | 10010
+| 0101111 | `hamoand` | 01011 | | |
+|===
+
+[[sub_subsec_standard_profile]]
+=== HFI Versions (Profiles)
+
+In the future standard profile we aim to develop  up to 4 explicit data regions. The minimal profile described in this document supports: 1 implicit code region, 1 implicit data region and 1 explicit data region. The additional standard profile supports: 2 implicit code regions, 4 implicit data regions, and 4 explicit data regions. These regions are numbered as follows: explicit data region 1, implicit data region 1 and implicit code region 1 are regions 1, 2, and 3 in both profiles. In the standard profile: explicit data region 2, 3, and 4 are regions 4, 5, and 6 respectively; implicit data region 2, 3, and 4 are regions 7, 8, and 9 respectively; implicit code region 2 is region 10. Additionally the permissions bit vector operand specified in the `hfisetregionpermission` and `hfigetregionpermission` instructions is also expanded to accommodate region permissions in the same order.
+
+Therefore, an instruction (`hfisetcurrexplicitdataregion` and `hfigetcurrexplicitdataregion`) that sets which explicit region the h-prefixed instructions will use is needed. `hfisetcurrexplicitdataregion` always precedes the h-prefixed instructions and takes the region number from its `rs1`. The instruction pair also double-checks the region number to ensure that it references an explicit region.
+
+* `hfisetcurrexplicitdataregion(region_number_t)`
+* `hfigetcurrexplicitdataregion() -> region_number_t`
+
+
+[[tab_enc_non_h_explicit]]
+.Encoding for R-type Non-h-prefixed Instructions (Explicit Only)
+[cols="3,3,3", options="header"]
+|===
+| funct3 | funct7 | Instruction 
+| 011 | 0000000 | `hfigetcurrexplicitdataregion`
+| 011 | 0000001 | `hfisetcurrexplicitdataregion`
+|===
+
+
+
+**Design Rationale**
+Regions exact some cost in terms of circuit area, and differing trade-offs may make sense for different use cases. Obviously more regions facilitate efficient access to more data and code concurrently, and can simplify runtime implementation.
+
+// T---for example, a server side
+// Wasm runtime may prefer the standard profile to support efficient concurrent
+// jaccess to multiple address spaces e.g. to support Wasm
+// multi-memories cite:[wasm-multi-memory] or the component
+// model cite:[wasm-component-model], or for sandboxing libraries where multiple
+// disjoint buffers are being shared across the sandbox boundary.
+
+While the minimal profile is limited in the number of regions, this can still offer meaningful benefits for certain use cases without significant concurrency or memory sharing. For example, the Google Chrome browser's Ubercage JIT isolation scheme cite:[v8-sbx] would be able to leverage this minimal profile for its isolation requirements cite:[v8-sbx-hfi].
+
+The standard profile offers an expanded number of regions. The particular number of regions was inspired by uses cases such as leveraging WebAssembly for efficient isolation of libraries from applications, and efficient isolation of different clients' code in serverless settings cite:[hfi]. The main observation here is that there is greater concurrency and sharing is present than simple use cases, but this can nevertheless be handled efficiently with a handful of regions. For uses cases that need additional regions, this can be achieved by spilling and restoring regions similar to how this is done with general-purpose registers.

@@ -1,0 +1,26 @@
+[[sec_introduction]]
+== Introduction
+
+Hardware-assisted Fault Isolation (HFI) is a hardware extension designed to support in-process isolation (sandboxing) of untrusted code. It targets both unmodified native binaries and existing Software-Based Fault Isolation (SFI cite:[wahbe-sfi]) systems, such as WebAssembly cite:[wasm] and Google's Ubercage (V8 JIT sandbox cite:[v8-sbx]), to improve their performance, security, and scalability cite:[hfi].
+
+HFI aims to provide the capabilities required for secure sandboxing: robust data and control flow isolation, as well as complete and efficient mediation of privileged instructions (e.g., system calls). This specification describes the functional properties of HFI on RISC-V; a more complete description of the background and motivation is presented in the ASPLOS 2023 paper cite:[hfi].
+
+=== HFI Execution Model
+
+To support these capabilities, HFI defines a shared execution model involving a privileged runtime and a restricted sandbox mode. The code responsible for managing the sandbox is referred to as the _sandboxing runtime_. The runtime is responsible for saving and restoring context appropriately and can use HFI to multiplex many sandboxes across harts, scheduling them as it sees fit. The runtime controls the transition into the sandbox using the `hfienter` instruction and regains control when the sandboxed code executes an `hfiexit` instruction. When a hart operates in HFI Mode, execution is restricted to ensure isolation. To prevent the sandbox from bypassing these restrictions, HFI interposes on all paths out of the sandbox, ensuring the runtime can completely mediate all control flow and access to sensitive OS resources.
+
+To address diverse sandboxing requirements—ranging from legacy native binaries to modern SFI runtimes—HFI is divided into two distinct extensions: the Base HFI Extension and the HFI Explicit Extension.
+
+=== Base HFI Extension
+
+The Base HFI extension is the foundational layer of HFI, designed primarily to enable the secure sandboxing of unmodified native binaries and libraries. For native code to run inside a sandbox without modification or recompilation, it must be able to use standard RISC-V load, store, and jump instructions. The Base extension achieves this natural isolation by overlaying the standard address space with Implicit Data and Implicit Code regions. These regions transparently apply bounds checks to every standard memory access and instruction fetch performed by the sandboxed code, allowing native binaries to operate normally while determining access permissions on a first-match basis. 
+
+To ensure the native binary cannot bypass the sandbox or access sensitive OS resources, the Base extension hardens its sandbox by trapping and redirecting privileged operations, specifically system calls. Moreover, to prevent guest application from explicitly calling sandbox exits, sandbox exit instructions are also interposed on. Both system calls and sandbox exits are redirected to a trusted exit handler that can be configured by the runtime.
+
+This extension provides the core Interposition and Implicit Region logic necessary for coarse-grained isolation. The Base HFI extension is specified in <<sec_hfi_base,Chapter 2>>.
+
+=== Explicit HFI Extension
+
+The HFI Explicit extension builds upon the Base HFI extension to accelerate existing Software-Based Fault Isolation (SFI) technologies. This extension requires the Base HFI extension to be implemented and targets runtimes that utilize a linear memory model, such as WebAssembly. While the Base extension targets standard memory models, SFI runtimes often require memory access to be relative to a specific heap base with precise bounds.
+
+The HFI Explicit extension offloads the software overhead of bound-checking these accesses to hardware through two mechanisms. First, it provides Explicit Data Regions which, unlike the coarse-grained power-of-two sizing of implicit regions, support byte-granular sizing critical for exact heap bounds. Second, it introduces dedicated h-prefixed instructions (e.g., `hlw`, `hsw`) that perform region-relative addressing. By using these instructions, an SFI compiler can map software linear memory directly to hardware regions, allowing the hardware to perform bound checks automatically and eliminating the need for costly software guard instructions. The HFI Explicit extension is specified in <<sec_hfi_explicit,Chapter 3>>.
